@@ -24,7 +24,21 @@ class: center, middle
 
 # Bob: A Scalaz-Stream controlled Raspberry Pi robot
 ## Martin Carolan
+---
 
+# Personal goals for this project
+* Gentle re-introduction to electronics
+* Become familiar with Scalaz-Stream and http4s
+---
+
+# Goals for you lot
+--
+
+* Inspire you to play around with Raspberry Pi's
+--
+
+* Give a brief introduction to Scalaz-Stream
+  * Show you why it's quite a nice model
 ---
 # What's a Raspberry Pi?
 --
@@ -43,6 +57,7 @@ class: center, middle
 
 # Perfect!
 ---
+class: center, middle
 # Bob uses a Raspberry Pi model 2 B
 
 <img src="pi2b.jpg" width="640" height="480" />
@@ -170,7 +185,6 @@ class: middle
 trait Controller {
   val leftMotor: DigitalOutput
   val rightMotor: DigitalOutput
-  def shutdown: Task[Unit]
 }
 ```
 ## They are digital outputs
@@ -188,10 +202,6 @@ case class PiController(controller: GpioController) extends Controller {
   val rightMotor = PiDigitalOutput(controller.provisionDigitalOutputPin(
     RaspiPin.GPIO_07,
     PinState.LOW))
-
-  override def shutdown: Task[Unit] = Task {
-    controller.shutdown()
-  }
 
 }
 ```
@@ -368,20 +378,140 @@ Whenever some data is added to the `actions` queue, it will pass through to the 
 ---
 class: middle, center
 
-### By default, there is no concurrency within a `Process`
-#### Data will flow through the it  sequentially
+# But how do we get data onto the `actions`  queue?
+--
+
+## Bob does it by accepting HTTP POST requests
+---
+class: middle
+
+## http4s is a HTTP library built on top of Scalaz-Stream
+
+```scala
+  def processActionRequest(action: Action): Task[Response] =
+      actions.enqueueOne(action).flatMap(_ => Ok())
+
+  val bobRoute = HttpService {
+
+    case POST -> Root / "left" => processActionRequest(Left)
+
+    case POST -> Root / "right" => processActionRequest(Right)
+
+    case POST -> Root / "forward" => processActionRequest(Forward)
+
+    case POST -> Root / "halt" => processActionRequest(Halt)
+
+  }
+```
+
+You produce a `HttpService` by providing a `PartialFunction[Request, Task[Response]]`
+
+---
+class: middle
+
+## We can then start a HTTP server:
+
+```scala
+val bobServer: Process[Task, Server] = Process eval (BlazeBuilder.bindHttp(8080, "0.0.0.0")
+    .mountService(bobRoute, "/api")
+    .start)
+```
+---
+class: middle
+## We now have 2 `Process` instances
+* One `Process` reads an `Action` from an in-memory queue, and set appropriate GPIO state
+* One `Process` receives HTTP POST requests, and adds an appropriate `Action` to the in-memory queue
+---
+class: middle
+## What would happen if we ran them both?
+
+```scala
+val bobBrain = (actionSource to interpreter)
+val bobServer: Process[Task, Server] = Process eval (BlazeBuilder.bindHttp(8080, "0.0.0.0")
+    .mountService(bobRoute, "/api")
+    .start)
+```
+```scala
+bobBrain.run.run
+bobServer.run.run
+```
+--
+
+`bobBrain.run.run` would hang forever, `bobServer` would never run!
+---
+class: middle
+
+### By default, things flow through a `Process` sequentially
+#### If you want to run many `Process` instances in parallel, you need to explicitly merge them
+--
+
+```scala
+(bobBrain merge bobServer).run.run
+```
+---
+class: middle
+
+# Scalaz-Stream has given us a nice, clean way of dealing with data flows
+## Not much boilerplate was needed
 ---
 class: middle, center
+# This makes testing really natural
+---
+class: middle
 
-# You must ask for concurrency
-## Usually when merging multiple `Process`' together
+# A stub `Controller`:
+
+```scala
+case class StubController() extends Controller {
+  
+  var leftMotorSignals: Seq[State] = Seq.empty
+  var rightMotorSignals: Seq[State] = Seq.empty
+
+  override val leftMotor: DigitalOutput = new DigitalOutput {
+    override def enterState(state: State): Task[Unit] =
+      Task { leftMotorSignals = leftMotorSignals :+ state }
+  }
+
+  override val rightMotor: DigitalOutput = new DigitalOutput {
+    override def enterState(state: State): Task[Unit] =
+      Task { rightMotorSignals = rightMotorSignals :+ state }
+  }
+
+}
+```
+---
+class: middle
+
+## A Process doesn't care where data initially comes from:
+
+```scala
+test("Bob can interpret a single Forward command") {
+    val controller = RaspberryPi.StubController()
+    val bob = BobMain.bob(controller)
+
+    val actions: Process[Task, Action] = Process(Forward, Halt)
+
+    (actions to bob).run.run
+
+    withClue("left motor signals") { controller.leftMotorSignals shouldBe Seq(High, Low) }
+    withClue("right motor signals") { controller.rightMotorSignals shouldBe Seq(High, Low) }
+}
+```
+---
+# Thanks!
+That's all from me. I hope I have:
+* Inspired you to play around with Raspberry Pi's
+* Given a brief introduction to Scalaz-Stream
+  * Shown you why it's quite a nice model
     </textarea>
     <script src="https://gnab.github.io/remark/downloads/remark-latest.min.js">
     </script>
     <script>
       var slideshow = remark.create({
         highlightLines: true,
-        countIncrementalSlides: false
+        ratio: '16:9',
+        countIncrementalSlides: false,
+        highlightStyle: 'sunburst'
       });
     </script>
   </body>
