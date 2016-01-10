@@ -43,41 +43,6 @@ class: center, middle
 
 # Perfect!
 ---
-class: center, middle
-name: pizero
-
-<img src="pizero.jpg" />
-
-{{content}}
----
-template: pizero
-
-## Raspberry Pi Zero
----
-template: pizero
-
-## £4 computer!
----
-template:pizero
-
-## Ultra-low power consumption
----
-template: pizero
-
-## Dead, dead light
----
-template: pizero
-
-## Not ideal, though
----
-template: pizero
-
-## But why?
----
-template: pizero
-
-## No CSI connector: can't attach a camera
----
 # Bob uses a Raspberry Pi model 2 B
 
 <img src="pi2b.jpg" width="640" height="480" />
@@ -93,49 +58,19 @@ class: center, middle
 class: center, middle
 
 # CSI connector: Bob can see!
-
+---
+class: center, middle
+# Bob creates
+<img src="wifi.png" width="480" height="378" />
+## A Wi-Fi access point
 ---
 class: center, middle
 
-# What else was needed to build Bob?
+<img src="bobarchitecture.png" />
 ---
-class: center
-# 2 x Micro-gear motor: £3.51 each
-<img src="motor.jpg" />
----
-class: center
-# Ball caster: £2.20
+class: center, middle
 
-<img src="caster.jpg" width="400" height="376" />
----
-class: center
-# 2 x Wheel: £2.20 each
-
-<img src="wheels.jpg" />
----
-class: center
-# Motor control board: £6.99
-
-<img src="picoborg.png" width="559" height="446" />
----
-class: center
-# Raspberry Pi Camera: £18
-
-<img src="picamera.jpg" />
----
-class: center
-# Portable Micro-USB charge pack
-
-<img src="portablecharger.jpg" />
----
-class: center
-# Wifi USB Adapter: £8.99
-<img src="usbwifi.jpg" width="343" height="450" />
----
-class: center
-# Whatever chassis materials you have: Bob used to live in a carton from a Chicken Tikka
-
-<img src="bobtikka.JPG" />
+<img src="bobcontroller.png" />
 ---
 class: center, middle
 
@@ -238,7 +173,7 @@ trait Controller {
   def shutdown: Task[Unit]
 }
 ```
-## 2 digital outputs
+## They are digital outputs
 ---
 class: middle
 
@@ -266,26 +201,73 @@ class: middle
 ### How do we use the `Controller` to make Bob do things?
 
 ```scala
-case class Action(leftMotorState: State, rightMotorState: State)
+*case class Action(leftMotorState: State, rightMotorState: State)
   extends ((Controller) => Task[Unit]) {
-    
+
   def apply(controller: Controller): Task[Unit] =
     for {
       _ <- controller.leftMotor enterState leftMotorState
       _ <- controller.rightMotor enterState rightMotorState
-    }
-      yield ()
+    } yield ()
 
 }
 ```
+---
+class: middle
+
+### How do we use the `Controller` to make Bob do things?
 
 ```scala
-object Forward extends Action(High, High)
-object Left extends Action(High, Low)
-object Right extends Action(Low, High)
-object Halt extends Action(Low, Low)
-```
+case class Action(leftMotorState: State, rightMotorState: State)
+*  extends ((Controller) => Task[Unit]) {
 
+  def apply(controller: Controller): Task[Unit] =
+    for {
+      _ <- controller.leftMotor enterState leftMotorState
+      _ <- controller.rightMotor enterState rightMotorState
+    } yield ()
+
+}
+```
+---
+class: middle
+
+### How do we use the `Controller` to make Bob do things?
+
+```scala
+case class Action(leftMotorState: State, rightMotorState: State)
+  extends ((Controller) => Task[Unit]) {
+
+  def apply(controller: Controller): Task[Unit] =
+    for {
+*      _ <- controller.leftMotor enterState leftMotorState
+*      _ <- controller.rightMotor enterState rightMotorState
+    } yield ()
+
+}
+```
+---
+class: middle
+## We can now express all of Bob's possible movements in terms of an `Action`
+
+```scala
+  object Forward extends Action(High, High)
+  object Left extends Action(High, Low)
+  object Right extends Action(Low, High)
+  object Halt extends Action(Low, Low)
+```
+---
+class: middle
+
+## Running an action against a controller instance is trivial
+
+```scala
+def interpret(controller: Controller)(action: Action): Task[Unit] =
+    for {
+      _ <- Task { println(action) }
+      _ <- action(controller)
+    } yield ()
+```
 ---
 class: center
 name: scalazstream
@@ -319,19 +301,70 @@ template: scalazstream
 ## But the concept will still be the same
 ---
 # scalaz.stream.Process
-* A `Process` represents a (possibly infinite) stream of instances of a type
+* A `Process` represents a (possibly infinite) stream of data of a type
 
 --
-* Some data will be pulled from some `Source`
+* Data will be pulled from some `Source`
 
 --
-* The data will be sliced and diced in the usual manners (`filter`, `map`, etc.)
+* The data can be sliced and diced in the usual manners (`filter`, `map`, etc.)
 
 --
 * Some data can then arrive at a `Sink`
+  * Something that consumes data
+  * E.g. a database.. or a motor controller
 
 --
 * Effects, such as asynchronicity, may be encountered along the way
+---
+class: middle
+```scala
+def interpret(controller: Controller)(action: Action): Task[Unit] =
+    for {
+      _ <- Task { println(action) }
+      _ <- action(controller)
+    } yield ()
+```
+## How do we turn `interpret` into a `Sink`?
+```scala
+val interpreter: Sink[Task, Action] =
+  Process repeatEval Task(interpret(controller)_)
+```
+---
+class: middle
+## How do we declare a `Source` of `Action`?
+```scala
+val actions = async.boundedQueue[Action](10)
+```
+This is an in-memory bounded typed queue.<br/>
+We can easily turn it into a source:
+```scala
+val actionReader: Process[Task, Action] = actions.dequeue
+```
+---
+class: middle
+### Putting it all together
+
+```scala
+def interpret(controller: Controller)(action: Action): Task[Unit] =
+    for {
+      _ <- Task { println(action) }
+      _ <- action(controller)
+    } yield ()
+```
+
+```scala
+val actions = async.boundedQueue[Action](10)
+
+val interpreter: Sink[Task, Action] =
+  Process repeatEval Task(interpret(controller)_)
+val actionSource: Process[Task, Action] = actions.dequeue
+```
+
+```scala
+(actionSource to interpreter).run.run
+```
+Whenever some data is added to the `actions` queue, it will pass through to the `interpreter` Sink: Bob will move
 ---
 class: middle, center
 
@@ -341,12 +374,15 @@ class: middle, center
 class: middle, center
 
 # You must ask for concurrency
-## Usually when merging multiple `Process`'s together
+## Usually when merging multiple `Process`' together
     </textarea>
     <script src="https://gnab.github.io/remark/downloads/remark-latest.min.js">
     </script>
     <script>
-      var slideshow = remark.create();
+      var slideshow = remark.create({
+        highlightLines: true,
+        countIncrementalSlides: false
+      });
     </script>
   </body>
 </html>
