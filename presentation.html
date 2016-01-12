@@ -197,10 +197,11 @@ class: middle
 case class PiController(controller: GpioController) extends Controller {
 
   val leftMotor = PiDigitalOutput(controller.provisionDigitalOutputPin(
-    RaspiPin.GPIO_01,
-    PinState.LOW))
-  val rightMotor = PiDigitalOutput(controller.provisionDigitalOutputPin(
     RaspiPin.GPIO_07,
+    PinState.LOW))
+
+  val rightMotor = PiDigitalOutput(controller.provisionDigitalOutputPin(
+    RaspiPin.GPIO_01,
     PinState.LOW))
 
 }
@@ -211,7 +212,7 @@ class: middle
 ### How do we use the `Controller` to make Bob do things?
 
 ```scala
-*case class Action(leftMotorState: State, rightMotorState: State)
+*class Action(leftMotorState: State, rightMotorState: State)
   extends ((Controller) => Task[Unit]) {
 
   def apply(controller: Controller): Task[Unit] =
@@ -228,7 +229,7 @@ class: middle
 ### How do we use the `Controller` to make Bob do things?
 
 ```scala
-case class Action(leftMotorState: State, rightMotorState: State)
+class Action(leftMotorState: State, rightMotorState: State)
 *  extends ((Controller) => Task[Unit]) {
 
   def apply(controller: Controller): Task[Unit] =
@@ -245,7 +246,7 @@ class: middle
 ### How do we use the `Controller` to make Bob do things?
 
 ```scala
-case class Action(leftMotorState: State, rightMotorState: State)
+class Action(leftMotorState: State, rightMotorState: State)
   extends ((Controller) => Task[Unit]) {
 
   def apply(controller: Controller): Task[Unit] =
@@ -261,10 +262,10 @@ class: middle
 ## We can now express all of Bob's possible movements in terms of an `Action`
 
 ```scala
-  object Forward extends Action(High, High)
-  object Left extends Action(High, Low)
-  object Right extends Action(Low, High)
-  object Halt extends Action(Low, Low)
+  case object Forward extends Action(High, High)
+  case object Left extends Action(Low, High)
+  case object Right extends Action(High, Low)
+  case object Halt extends Action(Low, Low)
 ```
 ---
 class: middle
@@ -326,6 +327,40 @@ template: scalazstream
 
 --
 * Effects, such as asynchronicity, may be encountered along the way
+---
+class: middle
+# Declaring a `Process`
+
+```scala
+Process[+F[_], A]
+```
+where:
+* `F[_]` is the side effect container type encounted when building by the `Process`
+  * Often `Task` or `Nothing`
+* `A` is the type of the data that flows through the `Process`
+---
+class: middle
+# Making a Source
+```scala
+  def readLine: Task[String] = Task { Console.readLine() }
+```
+```scala
+  val oneName: Process[Task, String] = Process eval readLine
+```
+```scala
+  val manyNames: Process[Task, String] = Process repeatEval readLine
+```
+---
+class: middle
+# Making a Sink
+```scala
+type Sink[+F[_], A] = Process[F, A => F[Unit]]
+```
+Looks complex but:
+```scala
+def sendEmail(address: String): Task[Unit] = Task { println("this is an email to " + address) }
+val emailSink: Sink[Task, String] = Process repeatEval Task(sendEmail _)
+```
 ---
 class: middle
 ```scala
@@ -463,7 +498,7 @@ class: middle
 
 ```scala
 case class StubController() extends Controller {
-  
+
   var leftMotorSignals: Seq[State] = Seq.empty
   var rightMotorSignals: Seq[State] = Seq.empty
 
