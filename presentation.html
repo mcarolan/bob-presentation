@@ -35,22 +35,14 @@ class: center, middle
 --
 
 * Inspire you to play around with Raspberry Pi's
---
-
 * Give a brief introduction to Scalaz-Stream
   * Show you why it's quite a nice model
 ---
 # What's a Raspberry Pi?
---
-
-* A small computer
---
-
+* A small, low power, computer
 * Doesn't cost much £££
---
-
 * It's really easy to hook them up to things
-  * general purpose input/output connector
+  * 26 general purpose input/output pins
   * USB, video, audio
 ---
 class: center, middle
@@ -98,18 +90,6 @@ name: bob
 
 {{content}}
 ---
-template: bob
-
-## Bob has 2 DC motors
----
-template: bob
-
-## Motor controller powers them by a dedicated 12V battery
----
-template: bob
-
-## The Raspberry Pi tells the motor controller which motors to turn on using 4 GPIO Pins
----
 class: center
 
 <img src="bobleft.png" />
@@ -134,15 +114,15 @@ class: middle, center
 ---
 class: middle
 
-## A GPIO pin can be used digitally
+## A GPIO output pin is set digitally
 
 ```scala
-sealed trait State
-case object High extends State
-case object Low extends State
+sealed trait PinState
+case object High extends PinState
+case object Low extends PinState
 ```
 
-We give it only 2 possible states:
+There are 2 possible states:
 * High (outputting 5V of power)
 * Low (not outputting any power)
 ---
@@ -150,22 +130,18 @@ class: middle
 
 ```scala
 trait DigitalOutput {
-  def enterState(state: State): Task[Unit]
+  def enterState(state: PinState): Task[Unit]
 }
 ```
-We can say the pin is a `DigitalOutput`: it has a function that:
-* Given a desired `State` (`High` or `Low`)
+Each motor is a `DigitalOutput`: it has a function that:
+* Given a desired `PinState` (`High` or `Low`)
 * Will give you back an asynchronous container
-  * When run, it will have a side-effect of causing the GPIO pin to enter the state you desired
----
-class: middle
-
-## My implementation wraps around the pi4j Java Library
+  * When run, it will have a side-effect of causing the GPIO pin to become high or low
 
 ```scala
 case class PiDigitalOutput(pin: GpioPinDigitalOutput) extends DigitalOutput {
 
-  override def enterState(state: State): Task[Unit] = Task {
+  override def enterState(state: PinState): Task[Unit] = Task {
     state match {
       case High => pin.high()
       case Low => pin.low()
@@ -174,12 +150,10 @@ case class PiDigitalOutput(pin: GpioPinDigitalOutput) extends DigitalOutput {
 
 }
 ```
-
-It just makes the library a bit more Scalary
 ---
 class: middle
 
-# A left and a right motor control Bob
+## 2 digital outputs control Bob's movement
 
 ```scala
 trait Controller {
@@ -187,11 +161,7 @@ trait Controller {
   val rightMotor: DigitalOutput
 }
 ```
-## They are digital outputs
----
-class: middle
 
-### Again, the implementation is just a wrapper around pi4j
 
 ```scala
 case class PiController(controller: GpioController) extends Controller {
@@ -208,11 +178,10 @@ case class PiController(controller: GpioController) extends Controller {
 ```
 ---
 class: middle
-
 ### How do we use the `Controller` to make Bob do things?
 
 ```scala
-*class Action(leftMotorState: State, rightMotorState: State)
+class Action(leftMotorState: PinState, rightMotorState: PinState)
   extends ((Controller) => Task[Unit]) {
 
   def apply(controller: Controller): Task[Unit] =
@@ -223,44 +192,6 @@ class: middle
 
 }
 ```
----
-class: middle
-
-### How do we use the `Controller` to make Bob do things?
-
-```scala
-class Action(leftMotorState: State, rightMotorState: State)
-*  extends ((Controller) => Task[Unit]) {
-
-  def apply(controller: Controller): Task[Unit] =
-    for {
-      _ <- controller.leftMotor enterState leftMotorState
-      _ <- controller.rightMotor enterState rightMotorState
-    } yield ()
-
-}
-```
----
-class: middle
-
-### How do we use the `Controller` to make Bob do things?
-
-```scala
-class Action(leftMotorState: State, rightMotorState: State)
-  extends ((Controller) => Task[Unit]) {
-
-  def apply(controller: Controller): Task[Unit] =
-    for {
-*      _ <- controller.leftMotor enterState leftMotorState
-*      _ <- controller.rightMotor enterState rightMotorState
-    } yield ()
-
-}
-```
----
-class: middle
-## We can now express all of Bob's possible movements in terms of an `Action`
-
 ```scala
   case object Forward extends Action(High, High)
   case object Left extends Action(Low, High)
@@ -270,7 +201,7 @@ class: middle
 ---
 class: middle
 
-## Running an action against a controller instance is trivial
+## To run an action against a controller
 
 ```scala
 def interpret(controller: Controller)(action: Action): Task[Unit] =
@@ -323,7 +254,7 @@ template: scalazstream
 --
 * Some data can then arrive at a `Sink`
   * Something that consumes data
-  * E.g. a database.. or a motor controller
+  * E.g. a database... or a motor controller
 
 --
 * Effects, such as asynchronicity, may be encountered along the way
@@ -358,7 +289,7 @@ type Sink[+F[_], A] = Process[F, A => F[Unit]]
 ```
 Looks complex but:
 ```scala
-def sendEmail(address: String): Task[Unit] = Task { println("this is an email to " + address) }
+def sendEmail(address: String): Task[Unit] = Task { println(s"this is an email to $address") }
 val emailSink: Sink[Task, String] = Process repeatEval Task(sendEmail _)
 ```
 ---
@@ -370,8 +301,10 @@ def interpret(controller: Controller)(action: Action): Task[Unit] =
       _ <- action(controller)
     } yield ()
 ```
-## How do we turn `interpret` into a `Sink`?
+### How do we turn `interpret` into a `Sink`?
 ```scala
+// type Sink[+F[_], A] = Process[F, A => F[Unit]]
+
 val interpreter: Sink[Task, Action] =
   Process repeatEval Task(interpret(controller)_)
 ```
@@ -413,10 +346,10 @@ Whenever some data is added to the `actions` queue, it will pass through to the 
 ---
 class: middle, center
 
-# But how do we get data onto the `actions`  queue?
+## But how do we get data onto the `actions`  queue?
 --
 
-## Bob does it by accepting HTTP POST requests
+### Bob does it by accepting HTTP POST requests
 ---
 class: middle
 
@@ -472,7 +405,7 @@ bobServer.run.run
 ```
 --
 
-`bobBrain.run.run` would hang forever, `bobServer` would never run!
+`bobBrain` is an infinite stream, `bobServer` will never get the chance to run!
 ---
 class: middle
 
@@ -486,8 +419,8 @@ class: middle
 ---
 class: middle
 
-# Scalaz-Stream has given us a nice, clean way of dealing with data flows
-## Not much boilerplate was needed
+## Scalaz-Stream has given us a nice, clean way of dealing with data flows
+### Not much boilerplate was needed
 ---
 class: middle, center
 # This makes testing really natural
